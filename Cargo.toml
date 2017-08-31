@@ -1,0 +1,11 @@
+[package]
+name = "rock"
+version = "0.1.0"
+authors = ["Martin Evans <martindevans@gmail.com>"]
+
+[dependencies]
+futures = "0.1.14"
+lazy_static = "0.2"
+num = "0.1.40"
+seahash = "3.0.5"
+time = "0.1.38"
