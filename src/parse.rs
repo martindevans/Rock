@@ -1,4 +1,4 @@
-use noun::{ Noun, nock };
+use noun::{ Noun };
 
 #[derive(Debug, PartialEq)]
 enum Token {

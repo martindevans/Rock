@@ -1,34 +1,21 @@
-use std::sync::Arc;
+//use std::sync::Arc;
+use std::rc::Rc;
 use std::collections::hash_map::DefaultHasher;
 use std::num::Wrapping;
 use std::hash::{ Hash, Hasher };
 use std::ops::Deref;
 use std::fmt;
+use std::cell::{ Cell };
 
 use seahash::SeaHasher;
 
 use num::bigint::{ BigUint };
-use num::{ ToPrimitive, FromPrimitive, Integer };
-
-lazy_static! {
-    pub static ref ATOM_ZERO : Arc<Box<Noun>> = Arc::new(Box::new(Noun::atom_from_u64(0)));
-    pub static ref ATOM_ONE  : Arc<Box<Noun>> = Arc::new(Box::new(Noun::atom_from_u64(1)));
-
-    pub static ref BIGINT_1 : BigUint = BigUint::from_u32(1).expect("Failed to convert u32 into BigInt");
-    pub static ref BIGINT_2 : BigUint = BigUint::from_u32(2).expect("Failed to convert u32 into BigInt");
-    pub static ref BIGINT_3 : BigUint = BigUint::from_u32(3).expect("Failed to convert u32 into BigInt");
-}
-
-fn mix_hash_down(hash64: u64) -> u32 {
-    let hi = Wrapping((hash64 >> 32) as u32);
-    let lo = Wrapping((hash64 & 0x0000FFFF) as u32);
-    (hi * Wrapping(2251) + lo * Wrapping(1049)).0
-}
+use num::{ ToPrimitive, FromPrimitive, Integer, Zero };
 
 fn calculate_hash(num: &BigUint) -> u32 {
     let mut s = SeaHasher::new();
     num.hash(&mut s);
-    mix_hash_down(s.finish())
+    return (s.finish() & 0xFFFF) as u32;
 }
 
 fn eq_big_u32(big: &BigUint, i: u32) -> bool {
@@ -36,17 +23,90 @@ fn eq_big_u32(big: &BigUint, i: u32) -> bool {
         && &BigUint::from_u32(i).expect("Failed to convert u32 into BigInt") == big;
 }
 
+/* macro_rules! recycle_noun(
+ ($nn:expr) => (
+    Ok(Rc::new(Box::new($nn)))
+ );
+ ($nn:expr, $x:expr $( , $more:expr )* ) => (
+    try_replace_noun_internals($x, $nn)
+        .or_else(|nnn| { return recycle_noun!(nnn); })
+ )
+);*/
+
+fn try_replace_noun_internals(candidate : Rc<Box<Noun>>, nn: Noun) -> Result<Rc<Box<Noun>>, Noun> {
+    if let Ok(mut owned_box) = Rc::try_unwrap(candidate) {
+        //we own the box, mutate it in place
+        *owned_box = nn;
+        return Ok(Rc::new(owned_box));
+    } else {
+        return Err(nn);
+    }
+}
+
+pub struct ExecutionContext
+{
+    Atom0: Rc<Box<Noun>>,
+    Atom1: Rc<Box<Noun>>,
+
+    BigInt1: BigUint,
+    BigInt2: BigUint,
+    BigInt3: BigUint,
+
+    pub Q: Cell<u32>,
+    pub E: Cell<u32>,
+    pub S: Cell<u32>,
+    pub N0: Cell<u32>,
+    pub N1: Cell<u32>,
+    pub N2: Cell<u32>,
+    pub N3: Cell<u32>,
+    pub N4: Cell<u32>,
+    pub N5: Cell<u32>,
+    pub N6: Cell<u32>,
+    pub N7: Cell<u32>,
+    pub N8: Cell<u32>,
+    pub N9: Cell<u32>,
+    pub N10: Cell<u32>,
+}
+
+impl ExecutionContext {
+    pub fn new() -> ExecutionContext {
+        return ExecutionContext {
+            Atom0: Rc::new(Box::new(Noun::atom_from_u64(0))),
+            Atom1: Rc::new(Box::new(Noun::atom_from_u64(1))),
+
+            BigInt1: BigUint::from_u32(1).unwrap(),
+            BigInt2: BigUint::from_u32(2).unwrap(),
+            BigInt3: BigUint::from_u32(3).unwrap(),
+
+            Q: Cell::new(0),
+            E: Cell::new(0),
+            S: Cell::new(0),
+            N0: Cell::new(0),
+            N1: Cell::new(0),
+            N2: Cell::new(0),
+            N3: Cell::new(0),
+            N4: Cell::new(0),
+            N5: Cell::new(0),
+            N6: Cell::new(0),
+            N7: Cell::new(0),
+            N8: Cell::new(0),
+            N9: Cell::new(0),
+            N10: Cell::new(0),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Noun {
-    Cell(u32, Arc<Box<Noun>>, Arc<Box<Noun>>),
+    Cell(u32, Rc<Box<Noun>>, Rc<Box<Noun>>),
     Atom(u32, BigUint)
 }
 
 impl PartialEq for Noun {
     fn eq(&self, other: &Noun) -> bool {
         match (self, other) {
-            //Both atoms, compare their values (shortvut with hash comparison first)
-            (&Noun::Atom(hl, ref l), &Noun::Atom(hr, ref r)) => hl == hr && l == r,
+            //Both atoms, compare their values (shortcut with hash comparison first)
+            (&Noun::Atom(hl, ref vl), &Noun::Atom(hr, ref vr)) => hl == hr && vl == vr,
 
             //Both cells, recursively compare the components (shortcut with hash comparison first)
             (&Noun::Cell(hl, ref ll, ref lr), &Noun::Cell(hr, ref rl, ref rr)) => hl == hr && ll == rl && lr == rr,
@@ -78,18 +138,18 @@ impl Noun {
 
     pub fn cell_from_nouns(left: Noun, right: Noun) -> Noun {
         Noun::cell_from_arcs(
-            Arc::new(Box::new(left)),
-            Arc::new(Box::new(right))
+            Rc::new(Box::new(left)),
+            Rc::new(Box::new(right))
         )
     }
 
-    fn cell_from_arcs(left: Arc<Box<Noun>>, right: Arc<Box<Noun>>) -> Noun {
+    fn cell_from_arcs(left: Rc<Box<Noun>>, right: Rc<Box<Noun>>) -> Noun {
 
         //Calculate the hash of the two child items
         let mut d = DefaultHasher::new();
         d.write_u32(left.get_hash());
         d.write_u32(right.get_hash());
-        let hash = mix_hash_down(d.finish());
+        let hash = (d.finish() & 0xFFFF) as u32;
 
         Noun::Cell(
             hash,
@@ -110,19 +170,22 @@ impl Noun {
 
     // ?[a b]      0
     // ?a          1
-    fn question_mark(&self) -> Arc<Box<Noun>> {
+    fn question_mark(&self, ctx: &ExecutionContext) -> Rc<Box<Noun>> {
+
+        ctx.Q.set(ctx.Q.get() + 1);
+
         match self {
-            &Noun::Cell(_, _, _) => ATOM_ZERO.clone(),
-            &Noun::Atom(_, _)    => ATOM_ONE.clone()
+            &Noun::Cell(_, _, _) => ctx.Atom0.clone(),
+            &Noun::Atom(_, _)    => ctx.Atom1.clone()
         }
     }
 
     // +[a b]       ERROR
     // +a           1 + a
-    fn plus(&self) -> Option<BigUint> {
+    fn plus(&self, ctx: &ExecutionContext) -> Option<BigUint> {
         match self {
             &Noun::Cell(_, _, _) => None,
-            &Noun::Atom(_, ref n)    => {
+            &Noun::Atom(_, ref n) => {
                 return Some(n + 1u8)
             }
         }
@@ -131,9 +194,12 @@ impl Noun {
     // =[a a]       0
     // =[a b]       1
     // =a           ERROR
-    fn equals(&self) -> Option<Arc<Box<Noun>>> {
+    fn equals(&self, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
+
+        ctx.E.set(ctx.E.get() + 1);
+
         if let &Noun::Cell(_, ref l, ref r) = self {
-            Some(if l == r { ATOM_ZERO.clone() } else { ATOM_ONE.clone() })
+            Some(if l == r { ctx.Atom0.clone() } else { ctx.Atom1.clone() })
         } else {
             None
         }
@@ -145,9 +211,9 @@ impl Noun {
     // /[(a + a) b]     /[2 /[a b]]
     // /[(a + a + 1) b] /[3 /[a b]]
     // /a               ERROR
-    fn slash(&self) -> Option<Arc<Box<Noun>>> {
+    fn slash(&self, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
         match self {
-            &Noun::Cell(_, ref l, ref r) => Noun::slash_cell(&l, &r),
+            &Noun::Cell(_, ref l, ref r) => Noun::slash_cell(&l, &r, &ctx),
             &Noun::Atom(_, _)            => None
         }
     }
@@ -157,56 +223,86 @@ impl Noun {
     // /[3 a b]         b
     // /[(a + a) b]     /[2 /[a b]]
     // /[(a + a + 1) b] /[3 /[a b]]
-    fn slash_cell(l: &Arc<Box<Noun>>, r: &Arc<Box<Noun>>)-> Option<Arc<Box<Noun>>> {
+    fn slash_cell(l: &Rc<Box<Noun>>, r: &Rc<Box<Noun>>, ctx: &ExecutionContext)-> Option<Rc<Box<Noun>>> {
+        if let &Noun::Atom(_, ref lv) = l.deref().deref() {
+            Noun::slash_big_num(&lv, &r, &ctx)
+        } else {
+            None
+        }
+    }
 
-        fn slash_num(selector: &BigUint, r: &Arc<Box<Noun>>) -> Option<Arc<Box<Noun>>> {
-            
-            // /[1 a]           a
-            if eq_big_u32(&selector, 1) {
-                return Some(r.clone())
-            }
+    // Nock slash op using a native unsigned integer as the selector. Fastest way to perform lookup
+    fn slash_num(selector: u64, r: &Rc<Box<Noun>>, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
+        
+        ctx.S.set(ctx.S.get() + 1);
 
-            // /[2 [a b]]       a
-            // /[3 [a b]]       b
-            let is2 = eq_big_u32(&selector, 2);
-            let is3 = eq_big_u32(&selector, 3);
-            if is2 || is3 {
-                return match r.deref().deref() {
-                    &Noun::Atom(_, _)    => None,
-                    &Noun::Cell(_, ref l, ref r) => {
-                        Some(if is2 { l.clone() } else { r.clone() })
-                    }
-                }
-            }
+        let mut node = r;
 
-            // /[(a + a) b]     /[2 /[a b]]
-            // /[(a + a + 1) b] /[3 /[a b]]
-            if selector.is_even() {
-                let half = selector.div_floor(&BIGINT_2.deref());
-
-                // /[a b]
-                return if let Some(ref inner) = slash_num(&half, &r) {
-                    slash_num(&BIGINT_2.deref(), &inner)
-                } else {
-                    None
-                }
-
+        let msb = 64 - selector.leading_zeros();
+        for i in (0 .. (msb - 1)).rev() {
+            if let &Noun::Cell(_, ref ll, ref rr) = node.deref().deref() {
+                node = if selector & (1 << i) == 0 { ll } else { rr }
             } else {
-                let half = (selector - BIGINT_1.deref()).div_floor(&BIGINT_2.deref());
-                
-                // /[a b]
-                return if let Some(ref inner) = slash_num(&half, &r) {
-                    slash_num(&BIGINT_3.deref(), &inner)
-                } else {
-                    None
+                return None;
+            }
+        }
+
+        return Some(node.clone());
+    }
+
+    // Nock slash op using big ints, will fall back to native int if selector fits into a u64
+    fn slash_big_num(selector: &BigUint, r: &Rc<Box<Noun>>, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
+            
+        //try to fall back to the faster slash operator using integers
+        //Since `slash_big_num` is recursive we're hopefully going to very rapidly fall back into the fast path even for _vast_ selectors
+        if let Some(usel) = selector.to_u64() {
+            return Noun::slash_num(usel, &r, &ctx);
+        }
+
+        ctx.S.set(ctx.S.get() + 1);
+
+        //Early exit if index is invalid
+        if selector.is_zero() { return None; }
+
+        // /[1 a]           a
+        if selector == &ctx.BigInt1 {
+            return Some(r.clone())
+        }
+
+        // /[2 [a b]]       a
+        // /[3 [a b]]       b
+        let is2 = eq_big_u32(&selector, 2);
+        let is3 = eq_big_u32(&selector, 3);
+        if is2 || is3 {
+            return match r.deref().deref() {
+                &Noun::Atom(_, _)    => None,
+                &Noun::Cell(_, ref l, ref r) => {
+                    Some(if is2 { l.clone() } else { r.clone() })
                 }
             }
         }
 
-        if let &Noun::Atom(_, ref lv) = l.deref().deref() {
-            slash_num(&lv, &r)
+        // /[(a + a) b]     /[2 /[a b]]
+        // /[(a + a + 1) b] /[3 /[a b]]
+        if selector.is_even() {
+            let half = selector.div_floor(&ctx.BigInt2);
+
+            // /[a b]
+            return if let Some(ref inner) = Noun::slash_big_num(&half, &r, &ctx) {
+                Noun::slash_big_num(&ctx.BigInt2, &inner, &ctx)
+            } else {
+                None
+            }
+
         } else {
-            None
+            let half = selector.div_floor(&ctx.BigInt2);
+            
+            // /[a b]
+            return if let Some(ref inner) = Noun::slash_big_num(&half, &r, &ctx) {
+                Noun::slash_big_num(&ctx.BigInt3, &inner, &ctx)
+            } else {
+                None
+            }
         }
     }
 
@@ -224,28 +320,53 @@ impl Noun {
     // *[a 10 [b c] d]  *[a 8 c 7 [0 3] d]
     // *[a 10 b c]      *[a c]
     //*a                ERROR
-    pub fn star(&self) -> Option<Arc<Box<Noun>>> {
+    pub fn star(&self, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
         if let &Noun::Cell(_, ref a, ref r) = self {
-            Noun::star_cell(&a, &r)
+            Noun::star_cell(&a, &r, &ctx)
         } else {
             None
         }
     }
 
     // Computes *[l 2 r] without doing the work of constructing a cell
-    fn star2(l: &Arc<Box<Noun>>, r: &Arc<Box<Noun>>) -> Option<Arc<Box<Noun>>> {
+    fn star2(l: &Rc<Box<Noun>>, r: &Rc<Box<Noun>>, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
+
+        ctx.N2.set(ctx.N2.get() + 1);
+
         if let &Noun::Cell(_, ref b, ref c) = r.deref().deref() {
 
-            let maybe_lb = Noun::star_cell(&l, &b);
-            let maybe_lc = Noun::star_cell(&l, &c);
+            let maybe_lb = Noun::star_cell(&l, &b, &ctx);
+            let maybe_lc = Noun::star_cell(&l, &c, &ctx);
 
             return match (maybe_lb, maybe_lc) {
-                (Some(lb), Some(lc)) => Noun::star_cell(&lb, &lc),
+                (Some(lb), Some(lc)) => Noun::star_cell(&lb, &lc, &ctx),
                 _ => None
             };
         }
 
         None
+    }
+
+    // Computes the Nock 4 rule:
+    //   *[a 4 b]         +*[a b]
+    //
+    // Given to us in the form [l 4 r]
+    fn star4(l: &Rc<Box<Noun>>, r: &Rc<Box<Noun>>, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
+
+        ctx.N4.set(ctx.N4.get() + 1);
+        let a = l;
+        let b = r;
+
+        if let Some(sab) = Noun::star_cell(&a, &b, &ctx) {
+            if let Some(num) = sab.plus(&ctx) {
+
+                // Try to overwrite `sab` with the return value if we own the box
+                return Some(try_replace_noun_internals(sab, Noun::atom_from_biguint(num))
+                    .unwrap_or_else(|n| { return Rc::new(Box::new(n)); }));
+            }
+        }
+
+        return None;
     }
 
     // Computes the Nock 6 rule:
@@ -255,7 +376,9 @@ impl Noun {
     //
     // Quoting the docs:
     // > 6 is a primitive "if." If b evaluates to 0, we produce c; if b evaluates to 1, we produce d; otherwise, we crash.
-    fn star6(l: &Arc<Box<Noun>>, r: &Arc<Box<Noun>>) -> Option<Arc<Box<Noun>>> {
+    fn star6(l: &Rc<Box<Noun>>, r: &Rc<Box<Noun>>, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
+
+        ctx.N6.set(ctx.N6.get() + 1);
 
         let a = l;
 
@@ -264,13 +387,14 @@ impl Noun {
 
                 //We've matched down to get [a 6 b c d]
                 //Now evaluate *[a b] to get the condition
-                if let Some(ref eb) = Noun::star_cell(&a, &b) {
+                if let Some(ref eb) = Noun::star_cell(&a, &b, &ctx) {
                     if let &Noun::Atom(_, ref v) = eb.deref().deref() {
                         return match v.to_u8() {
 
                             //Now return *[a c] or *[a d] depending on the condition
-                            Some(0) => Noun::star_cell(&a, &c),
-                            Some(1) => Noun::star_cell(&a, &d),
+                            Some(0) => Noun::star_cell(&a, &c, &ctx),
+                            Some(1) => Noun::star_cell(&a, &d, &ctx),
+
                             _ => None
                         };
                     }
@@ -287,13 +411,15 @@ impl Noun {
     //   *[a 7 b c]        *[*[a b] c]
     //
     // Given to us in the form [l 7 r]
-    fn star7(l: &Arc<Box<Noun>>, r: &Arc<Box<Noun>>) -> Option<Arc<Box<Noun>>> {
+    fn star7(l: &Rc<Box<Noun>>, r: &Rc<Box<Noun>>, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
+
+        ctx.N7.set(ctx.N7.get() + 1);
 
         let a = l;
 
         if let &Noun::Cell(_, ref b, ref c) = r.deref().deref() {
-            if let Some(ref sab) = Noun::star_cell(&a, &b) {
-                return Noun::star_cell(&sab, &c);
+            if let Some(ref sab) = Noun::star_cell(&a, &b, &ctx) {
+                return Noun::star_cell(&sab, &c, &ctx);
             }
         }
 
@@ -306,20 +432,22 @@ impl Noun {
     //   *[a 8 b c]        *[[*[a b] a] c]
     //
     // Given to us in the form [l 8 r]
-    fn star8(l: &Arc<Box<Noun>>, r: &Arc<Box<Noun>>) -> Option<Arc<Box<Noun>>> {
+    fn star8(l: &Rc<Box<Noun>>, r: &Rc<Box<Noun>>, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
+
+        ctx.N8.set(ctx.N8.get() + 1);
 
         let a = l;
 
         if let &Noun::Cell(_, ref b, ref c) = r.deref().deref() {
-            if let Some(ref sab) = Noun::star_cell(&a, &b) {
+            if let Some(ref sab) = Noun::star_cell(&a, &b, &ctx) {
 
                 // create [*[a b] a]
-                let saba = Arc::new(Box::new(Noun::cell_from_arcs(
+                let saba = Rc::new(Box::new(Noun::cell_from_arcs(
                     sab.clone(),
                     a.clone()
                 )));
 
-                return Noun::star_cell(&saba, &c);
+                return Noun::star_cell(&saba, &c, &ctx);
             }
         }
 
@@ -333,14 +461,16 @@ impl Noun {
     //    *[*[a c] /[b *[a c]]]
     //
     // Given to us in the form [l 9 r]
-    fn star9(l: &Arc<Box<Noun>>, r: &Arc<Box<Noun>>) -> Option<Arc<Box<Noun>>> {
+    fn star9(l: &Rc<Box<Noun>>, r: &Rc<Box<Noun>>, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
+
+        ctx.N9.set(ctx.N9.get() + 1);
 
         let a = l;
 
         if let &Noun::Cell(_, ref b, ref c) = r.deref().deref() {
-            if let Some(ref sac) = Noun::star_cell(&a, &c) {
-                if let Some(ref slash) = Noun::slash_cell(&b, &sac) {
-                    return Noun::star_cell(&sac, &slash);
+            if let Some(ref sac) = Noun::star_cell(&a, &c, &ctx) {
+                if let Some(ref slash) = Noun::slash_cell(&b, &sac, &ctx) {
+                    return Noun::star_cell(&sac, &slash, &ctx);
                 }
             }
         }
@@ -354,7 +484,7 @@ impl Noun {
     //
     // Given to us in the form:
     //   *[l 10 r]
-    fn star10(l: &Arc<Box<Noun>>, r: &Arc<Box<Noun>>) -> Option<Arc<Box<Noun>>> {
+    fn star10(l: &Rc<Box<Noun>>, r: &Rc<Box<Noun>>, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
 
         //First up we need to distinguish which one we're running
         //
@@ -365,16 +495,16 @@ impl Noun {
     }
 
     // Compute *[a, [n, b]]
-    fn star_triple(a: &Arc<Box<Noun>>, n: &Arc<Box<Noun>>, b: &Arc<Box<Noun>>) -> Option<Arc<Box<Noun>>> {
+    fn star_triple(a: &Rc<Box<Noun>>, n: &Rc<Box<Noun>>, b: &Rc<Box<Noun>>, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
         match n.deref().deref() {
             &Noun::Cell(_, ref nl, ref nr) => {
                 // n is a cell, so we're in this case:
                 // *[a [b c] d]     [*[a b c] *[a d]]
                 // *[a [nl nr] b]   [*[a nl nr] *[a b]]
 
-                if let Some(anlnr) = Noun::star_triple(&a, &nl, &nr) {
-                    if let Some(ab) = Noun::star_cell(&a, &b) {
-                        return Some(Arc::new(Box::new(Noun::cell_from_arcs(anlnr, ab))));
+                if let Some(anlnr) = Noun::star_triple(&a, &nl, &nr, &ctx) {
+                    if let Some(ab) = Noun::star_cell(&a, &b, &ctx) {
+                        return Some(Rc::new(Box::new(Noun::cell_from_arcs(anlnr, ab))));
                     }
                 }
                 
@@ -383,42 +513,40 @@ impl Noun {
             &Noun::Atom(_, ref n) => {
                 match n.to_u8() {
                     // *[a 0 b]         /[b a]
-                    Some(0) => Noun::slash_cell(&b, &a),
+                    Some(0) => Noun::slash_cell(&b, &a, &ctx),
 
                     // *[a 1 b]         b
                     Some(1) => Some(b.clone()),
 
                     // *[a 2 b c]       *[*[a b] *[a c]]
-                    Some(2) => Noun::star2(&a, &b),
+                    Some(2) => Noun::star2(&a, &b, &ctx),
 
                     // *[a 3 b]         ?*[a b]
-                    Some(3) => Noun::star_cell(&a, &b)
-                        .and_then(|result| Some(result.question_mark())),
+                    Some(3) => Noun::star_cell(&a, &b, &ctx)
+                        .and_then(|result| Some(result.question_mark(&ctx))),
 
                     // *[a 4 b]         +*[a b]
-                    Some(4) => Noun::star_cell(&a, &b)
-                        .and_then(|result| result.plus())
-                        .and_then(|value|  Some(Arc::new(Box::new(Noun::atom_from_biguint(value))))),
+                    Some(4) => Noun::star4(&a, &b, &ctx),
 
                     // *[a 5 b]         =*[a b]
-                    Some(5) => Noun::star_cell(&a, &b)
-                        .and_then(|result| result.equals()),
+                    Some(5) => Noun::star_cell(&a, &b, &ctx)
+                        .and_then(|result| result.equals(&ctx)),
 
                     // *[a 6 b c d]     *[a 2 [0 1] 2 [1 c d] [1 0] 2 [1 2 3] [1 0] 4 4 b]
-                    Some(6) => Noun::star6(&a, &b),
+                    Some(6) => Noun::star6(&a, &b, &ctx),
 
                     // *[a 7 b c]       *[a 2 b 1 c]
-                    Some(7) => Noun::star7(&a, &b),
+                    Some(7) => Noun::star7(&a, &b, &ctx),
 
                     // *[a 8 b c]       *[a 7 [[7 [0 1] b] 0 1] c]
-                    Some(8) => Noun::star8(&a, &b),
+                    Some(8) => Noun::star8(&a, &b, &ctx),
 
                     // *[a 9 b c]       *[a 7 c 2 [0 1] 0 b]
-                    Some(9) => Noun::star9(&a, &b),
+                    Some(9) => Noun::star9(&a, &b, &ctx),
 
                     // *[a 10 [b c] d]  *[a 8 c 7 [0 3] d]
                     // *[a 10 b c]      *[a c]
-                    Some(10) => Noun::star10(&a, &b),
+                    Some(10) => Noun::star10(&a, &b, &ctx),
 
                     None => None,
                     Some(_) => None,
@@ -428,25 +556,25 @@ impl Noun {
     }
 
     // Computes *[a, r] without doing the work of constructing a cell
-    fn star_cell(l: &Arc<Box<Noun>>, r: &Arc<Box<Noun>>) -> Option<Arc<Box<Noun>>> {
+    fn star_cell(l: &Rc<Box<Noun>>, r: &Rc<Box<Noun>>, ctx: &ExecutionContext) -> Option<Rc<Box<Noun>>> {
         if let &Noun::Cell(_, ref n, ref b) = r.deref().deref() {
-            Noun::star_triple(&l, &n, &b)
+            Noun::star_triple(&l, &n, &b, &ctx)
         } else {
             None
         }
     }
 }
 
-pub fn nock(root: Noun) -> Option<Box<Noun>> {
+pub fn nock(root: Noun, ctx: &ExecutionContext) -> Option<Box<Noun>> {
 
     //Calculate the result
-    let result = root.star();
+    let result = root.star(&ctx);
 
     //Drop the input, the only thing left alive will be the result
     drop(root);
 
     //unwrap that from it's ARC (which now must be 1) and return it
-    return result.map(|r| { Arc::try_unwrap(r).expect("Result ARC should be 1") });
+    return result.map(|r| { Rc::try_unwrap(r).expect("Result RC should be 1") });
 }
 
 #[cfg(test)]
@@ -454,12 +582,12 @@ mod basic_tests {
 
     mod question_mark_tests {
 
-        use noun::{ Noun, ATOM_ONE, ATOM_ZERO };
+        use noun::{ Noun, ExecutionContext };
 
         #[test]
         fn question_mark_one_for_atom() {
             // ?1
-            assert_eq!(&***ATOM_ONE, &**Noun::atom_from_u64(1).question_mark());
+            assert_eq!(&Noun::atom_from_u64(1), &**Noun::atom_from_u64(1).question_mark(&ExecutionContext::new()));
         }
 
         #[test]
@@ -472,13 +600,13 @@ mod basic_tests {
                 Noun::atom_from_u64(2)
             );
 
-            assert_eq!(&***ATOM_ZERO, &**c.question_mark());
+            assert_eq!(&Noun::atom_from_u64(0), &**c.question_mark(&ExecutionContext::new()));
         }
     }
 
     mod plus_tests {
 
-        use noun::{ Noun };
+        use noun::{ Noun, ExecutionContext };
         use num::bigint::{ BigUint };
         use num::FromPrimitive;
 
@@ -492,25 +620,26 @@ mod basic_tests {
                 Noun::atom_from_u64(2)
             );
 
-            assert_eq!(None, c.plus());
+            assert_eq!(None, c.plus(&ExecutionContext::new()));
         }
 
         #[test]
         fn plus_adds_one_for_atom() {
             // +1
-            assert_eq!(Some(BigUint::from_i32(2).expect("Failed to convert i32 into BigInt")), Noun::atom_from_u64(1).plus());
+            assert_eq!(Some(BigUint::from_i32(2).expect("Failed to convert i32 into BigInt")), Noun::atom_from_u64(1).plus(&ExecutionContext::new()));
         }
     }
 
     mod equals_tests {
 
-        use noun::{ Noun, ATOM_ZERO, ATOM_ONE };
+        use noun::{ Noun, ExecutionContext };
         use std::ops::Deref;
+        use num::ToPrimitive;
 
         #[test]
         fn equals_none_for_atom() {
             // =1
-            assert_eq!(None, Noun::atom_from_u64(1).equals());
+            assert_eq!(None, Noun::atom_from_u64(1).equals(&ExecutionContext::new()));
         }
 
         #[test]
@@ -523,7 +652,7 @@ mod basic_tests {
                 Noun::atom_from_u64(1)
             );
 
-            assert_eq!(&***ATOM_ZERO, &**c.equals().unwrap());
+            assert_eq!(Noun::atom_from_u64(0), **c.equals(&ExecutionContext::new()).unwrap());
         }
 
         #[test]
@@ -543,7 +672,7 @@ mod basic_tests {
 
             let c = Noun::cell_from_nouns(a, b);
 
-            assert_eq!(&***ATOM_ZERO, &**c.equals().unwrap());
+            assert_eq!(Noun::atom_from_u64(0), **c.equals(&ExecutionContext::new()).unwrap());
         }
 
         #[test]
@@ -556,7 +685,7 @@ mod basic_tests {
                 Noun::atom_from_u64(2)
             );
 
-            assert_eq!(&***ATOM_ONE, &**c.equals().unwrap());
+            assert_eq!(Noun::atom_from_u64(1), **c.equals(&ExecutionContext::new()).unwrap());
         }
 
         #[test]
@@ -576,19 +705,19 @@ mod basic_tests {
 
             let c = Noun::cell_from_nouns(a, b);
 
-            assert_eq!(&***ATOM_ONE, &**c.equals().unwrap());
+            assert_eq!(Noun::atom_from_u64(1), **c.equals(&ExecutionContext::new()).unwrap());
         }
     }
 
     mod slash_tests {
 
-        use noun::{ Noun };
+        use noun::{ Noun, ExecutionContext };
         use std::ops::Deref;
 
         #[test]
         fn slash_none_for_atom() {
             // /1
-            assert_eq!(None, Noun::atom_from_u64(1).slash());
+            assert_eq!(None, Noun::atom_from_u64(1).slash(&ExecutionContext::new()));
         }
 
         #[test]
@@ -600,7 +729,7 @@ mod basic_tests {
                 Noun::atom_from_u64(2)
             );
 
-            let result = cell.slash();
+            let result = cell.slash(&ExecutionContext::new());
 
             assert_eq!(&Noun::atom_from_u64(2), result.unwrap().deref().deref());
         }
@@ -617,7 +746,7 @@ mod basic_tests {
                 )
             );
 
-            let result = cell.slash();
+            let result = cell.slash(&ExecutionContext::new());
 
             assert_eq!(&Noun::atom_from_u64(3), result.unwrap().deref().deref());
         }
@@ -637,7 +766,7 @@ mod basic_tests {
                 )
             );
 
-            let result = cell.slash();
+            let result = cell.slash(&ExecutionContext::new());
 
             assert_eq!(&Noun::cell_from_nouns(
                 Noun::atom_from_u64(4),
@@ -660,7 +789,7 @@ mod basic_tests {
                 )
             );
 
-            let result = cell.slash();
+            let result = cell.slash(&ExecutionContext::new());
 
             assert_eq!(&Noun::atom_from_u64(1), result.unwrap().deref().deref());
         }
@@ -683,7 +812,7 @@ mod basic_tests {
                 )
             );
 
-            let result = cell.slash();
+            let result = cell.slash(&ExecutionContext::new());
 
             assert_eq!(&Noun::atom_from_u64(3), result.unwrap().deref().deref());
         }
@@ -691,16 +820,16 @@ mod basic_tests {
 
     mod star_tests {
 
-        use noun::{ Noun };
+        use noun::{ Noun, ExecutionContext };
         use std::ops::Deref;
         use num::bigint::{ BigUint };
         use num::FromPrimitive;
         use num::ToPrimitive;
-        use std::sync::Arc;
+        use std::rc::Rc;
         
         #[test]    
         fn star_none_for_atom() {
-            let result = Noun::atom_from_u64(1).star();
+            let result = Noun::atom_from_u64(1).star(&ExecutionContext::new());
             assert_eq!(None, result);
         }
 
@@ -721,7 +850,7 @@ mod basic_tests {
                     Noun::atom_from_u64(0),
                     Noun::atom_from_u64(2),
                 )
-            ).star();
+            ).star(&ExecutionContext::new());
 
             assert_eq!(&Noun::atom_from_u64(1), result.expect("Expecting Some(1)").deref().deref());
         }
@@ -740,7 +869,7 @@ mod basic_tests {
                     Noun::atom_from_u64(1),
                     Noun::atom_from_u64(8),
                 )
-            ).star();
+            ).star(&ExecutionContext::new());
 
             assert_eq!(&Noun::atom_from_u64(8), result.expect("Expecting Some(8)").deref().deref());
         }
@@ -779,7 +908,7 @@ mod basic_tests {
                 )
             );
 
-            assert_eq!(&Noun::atom_from_u64(7), cell.star().expect("Expecting Some(7)").deref().deref());
+            assert_eq!(&Noun::atom_from_u64(7), cell.star(&ExecutionContext::new()).expect("Expecting Some(7)").deref().deref());
         }
 
         #[test]
@@ -807,7 +936,7 @@ mod basic_tests {
                 )
             );
 
-            assert_eq!(&Noun::atom_from_u64(1), &**cell.star().expect("Expecting Some(1)"));
+            assert_eq!(&Noun::atom_from_u64(1), &**cell.star(&ExecutionContext::new()).expect("Expecting Some(1)"));
         }
 
         #[test]
@@ -835,7 +964,7 @@ mod basic_tests {
                 )
             );
 
-            assert_eq!(&Noun::atom_from_u64(9), &**cell.star().expect("Expecting Some(9)"));
+            assert_eq!(&Noun::atom_from_u64(9), &**cell.star(&ExecutionContext::new()).expect("Expecting Some(9)"));
         }
 
         #[test]
@@ -866,7 +995,7 @@ mod basic_tests {
                 )
             );
 
-            assert_eq!(&Noun::atom_from_u64(0), &**cell.star().expect("Expecting Some(0)"));
+            assert_eq!(&Noun::atom_from_u64(0), &**cell.star(&ExecutionContext::new()).expect("Expecting Some(0)"));
         }
 
         #[test]
@@ -898,7 +1027,7 @@ mod basic_tests {
                 )
             );
 
-            assert_eq!(&Noun::atom_from_u64(43), &**cell.star().expect("Expecting Some(43)"));
+            assert_eq!(&Noun::atom_from_u64(43), &**cell.star(&ExecutionContext::new()).expect("Expecting Some(43)"));
         }
 
         #[test]
@@ -927,7 +1056,7 @@ mod basic_tests {
                 )
             );
 
-            assert_eq!(&Noun::atom_from_u64(233), &**cell.star().expect("Expecting Some(43)"));
+            assert_eq!(&Noun::atom_from_u64(233), &**cell.star(&ExecutionContext::new()).expect("Expecting Some(43)"));
         }
 
         #[test]
@@ -939,7 +1068,7 @@ mod basic_tests {
             //
             // .*(42 [7 [4 0 1] [4 0 1]])               44
 
-            let c401 = Arc::new(Box::new(Noun::cell_from_nouns(Noun::atom_from_u64(4), Noun::cell_from_nouns(Noun::atom_from_u64(0), Noun::atom_from_u64(1)))));    // [4 0 1]
+            let c401 = Rc::new(Box::new(Noun::cell_from_nouns(Noun::atom_from_u64(4), Noun::cell_from_nouns(Noun::atom_from_u64(0), Noun::atom_from_u64(1)))));    // [4 0 1]
 
             let cell = Noun::cell_from_nouns(
                 Noun::atom_from_u64(42),
@@ -952,7 +1081,7 @@ mod basic_tests {
                 )
             );
 
-            assert_eq!(&Noun::atom_from_u64(44), &**cell.star().expect("Expecting Some(44)"));
+            assert_eq!(&Noun::atom_from_u64(44), &**cell.star(&ExecutionContext::new()).expect("Expecting Some(44)"));
         }
 
         #[test]
@@ -964,8 +1093,8 @@ mod basic_tests {
             //
             // .*(42 [8 [4 0 1] [0 1]])             [43 42]
 
-            let c01 = Arc::new(Box::new(Noun::cell_from_nouns(Noun::atom_from_u64(0), Noun::atom_from_u64(1))));
-            let c401 = Arc::new(Box::new(Noun::cell_from_nouns(Noun::atom_from_u64(4), Noun::cell_from_nouns(Noun::atom_from_u64(0), Noun::atom_from_u64(1)))));
+            let c01 = Rc::new(Box::new(Noun::cell_from_nouns(Noun::atom_from_u64(0), Noun::atom_from_u64(1))));
+            let c401 = Rc::new(Box::new(Noun::cell_from_nouns(Noun::atom_from_u64(4), Noun::cell_from_nouns(Noun::atom_from_u64(0), Noun::atom_from_u64(1)))));
             
 
             let cell = Noun::cell_from_nouns(
@@ -979,7 +1108,7 @@ mod basic_tests {
                 )
             );
 
-            assert_eq!(&Noun::cell_from_nouns(Noun::atom_from_u64(43), Noun::atom_from_u64(42)), &**cell.star().expect("Expecting Some(44)"));
+            assert_eq!(&Noun::cell_from_nouns(Noun::atom_from_u64(43), Noun::atom_from_u64(42)), &**cell.star(&ExecutionContext::new()).expect("Expecting Some(44)"));
         }
 
         #[test]
@@ -991,8 +1120,8 @@ mod basic_tests {
             //
             // .*(42 [8 [4 0 1] [4 0 3]])               43
 
-            let c403 = Arc::new(Box::new(Noun::cell_from_nouns(Noun::atom_from_u64(4), Noun::cell_from_nouns(Noun::atom_from_u64(0), Noun::atom_from_u64(3)))));
-            let c401 = Arc::new(Box::new(Noun::cell_from_nouns(Noun::atom_from_u64(4), Noun::cell_from_nouns(Noun::atom_from_u64(0), Noun::atom_from_u64(1)))));
+            let c403 = Rc::new(Box::new(Noun::cell_from_nouns(Noun::atom_from_u64(4), Noun::cell_from_nouns(Noun::atom_from_u64(0), Noun::atom_from_u64(3)))));
+            let c401 = Rc::new(Box::new(Noun::cell_from_nouns(Noun::atom_from_u64(4), Noun::cell_from_nouns(Noun::atom_from_u64(0), Noun::atom_from_u64(1)))));
             
 
             let cell = Noun::cell_from_nouns(
@@ -1006,7 +1135,7 @@ mod basic_tests {
                 )
             );
 
-            assert_eq!(&Noun::atom_from_u64(43), &**cell.star().expect("Expecting Some(44)"));
+            assert_eq!(&Noun::atom_from_u64(43), &**cell.star(&ExecutionContext::new()).expect("Expecting Some(44)"));
         }
     }
 }
