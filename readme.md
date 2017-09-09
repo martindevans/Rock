@@ -9,6 +9,6 @@ To see it in action run something like this:
 And (eventually) get a response like this:
 
 ```
-Elapsed 66183002181ns 66183ms 66s
+Elapsed 66183002181ns 66183ms 4s
 [[19 349] 1]
 ```

@@ -9,3 +9,7 @@ lazy_static = "0.2"
 num = "0.1.40"
 seahash = "3.0.5"
 time = "0.1.38"
+futures-cpupool = "0.1.5"
+
+[profile.release]
+lto = true
